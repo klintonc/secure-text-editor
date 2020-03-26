@@ -50,17 +50,17 @@ public class AES {
 		return encryptedText;
 	}
 	
+	// returns null when the text cannot be decrypted (e.g. wrong key or not AES content)
 	public String decrypt() {
-		String decryptedText = "";
 		try {
 			encryptKey(key);
 			Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5PADDING");
 			cipher.init(Cipher.DECRYPT_MODE, secretKey);
-			decryptedText = new String(cipher.doFinal(Base64.getDecoder().decode(textA)));
+			return new String(cipher.doFinal(Base64.getDecoder().decode(textA)), "UTF-8");
 		}catch(Exception error) {
 			error.printStackTrace();
+			return null;
 		}
-		return decryptedText;
 	}
 	
 	public static void main(String[] args) {

@@ -14,7 +14,9 @@ import java.awt.event.WindowEvent;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.FileReader;
+import java.io.File;
 import java.io.FileWriter;
+import java.net.URL;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -70,7 +72,8 @@ public class SecureTextEditor extends WindowAdapter implements ActionListener{
 	
 	public void AddImageIcon() {
 		// Create Icon for title bar
-		ImageIcon icon = new ImageIcon("src/secure.png");
+		URL iconUrl = getClass().getResource("/secure.png");
+		ImageIcon icon = iconUrl != null ? new ImageIcon(iconUrl) : new ImageIcon("src/secure.png");
 		frame.setIconImage(icon.getImage());
 	}
 	
@@ -270,13 +273,13 @@ public class SecureTextEditor extends WindowAdapter implements ActionListener{
 		else if(event.getSource() == copy) textArea.copy();
 		else if(event.getSource() == paste) textArea.paste();
 		else if(event.getSource() == delete) {
-			textArea.setText(textArea.getText().replace(textArea.getSelectedText(),""));
+			textArea.replaceSelection("");
 		}
 		else if(event.getSource() == selectAll) textArea.selectAll();
 		else if(event.getSource() == timeNDate){
-			DateFormat dateFormat = new SimpleDateFormat("hh:mm a dd/mm/yyyy");
+			DateFormat dateFormat = new SimpleDateFormat("hh:mm a dd/MM/yyyy");
 			Date date = new Date();
-			textArea.setText(textArea.getText() + dateFormat.format(date));
+			textArea.replaceSelection(dateFormat.format(date));
 		}
 		else if(event.getSource() == wordWrap) {
 			if(wordWrap.isSelected()) {
@@ -327,7 +330,8 @@ public class SecureTextEditor extends WindowAdapter implements ActionListener{
 	public void openFile() {
 		FileDialog openFile = new FileDialog(frame, "Open", FileDialog.LOAD);
 		openFile.setVisible(true);
-		String filePath = openFile.getDirectory() + openFile.getFile(); // Get file path from user
+		if (openFile.getFile() == null) return; // user cancelled
+		String filePath = new File(openFile.getDirectory(), openFile.getFile()).getPath(); // Get file path from user
 		BufferedReader bf = null; // Reader file content by using buffer reader
 		StringBuffer newTextArea = new StringBuffer(); // store content from file by using StringBuffer
 		try {
@@ -336,13 +340,24 @@ public class SecureTextEditor extends WindowAdapter implements ActionListener{
 			while((line = bf.readLine()) != null ) { // read the file line by line
 				newTextArea.append(line + "\n");
 			}
-		}catch(Exception error) { error.printStackTrace(); }
+			bf.close();
+		}catch(Exception error) {
+			error.printStackTrace();
+			JOptionPane.showMessageDialog(frame, "Could not open the file.");
+			return;
+		}
 		// Remove end of line content
 		String content = newTextArea.toString().trim(); 
-		// Add content to text area
-		String[] fileType = openFile.getFile().split("\\.");
-		if (fileType[1].equals("txt")) textArea.setText(content);
-		else textArea.setText(decryptText(content, fileType[1]));
+		// Add content to text area (the extension is the text after the last dot)
+		String fileName = openFile.getFile();
+		int dot = fileName.lastIndexOf('.');
+		String fileType = dot >= 0 ? fileName.substring(dot + 1) : "";
+		if (fileType.equals("encv") || fileType.equals("enca")) {
+			String plainText = decryptText(content, fileType);
+			if (plainText == null) return; // cancelled or wrong key
+			textArea.setText(plainText);
+		}
+		else textArea.setText(content);
 		isSaved = true;
 		originalText = textArea.getText();
 		// Update title frame
@@ -353,21 +368,24 @@ public class SecureTextEditor extends WindowAdapter implements ActionListener{
 	public void saveFile(String textA, String fileType) {
 		FileDialog saveFile = new FileDialog(frame, "Save As", FileDialog.SAVE);
 		saveFile.setVisible(true);
-		// Save file name
-		saveFile.setFile(saveFile.getFile());
+		if (saveFile.getFile() == null) return; // user cancelled
+		// add the extension unless the user already typed it
+		String fileName = saveFile.getFile().endsWith(fileType) ? saveFile.getFile() : saveFile.getFile() + fileType;
 		// save text area
 		try {
-			BufferedWriter bf = new BufferedWriter(new FileWriter(saveFile.getDirectory()+"\\"+saveFile.getFile()+fileType));
+			BufferedWriter bf = new BufferedWriter(new FileWriter(new File(saveFile.getDirectory(), fileName)));
 			bf.write(textA);
 			bf.close();
-		}catch(Exception error) { error.printStackTrace(); }
-		// set frame title
-		if( saveFile.getFile() != null ) {
-			if(fileType.equals(".txt")) originalText = textA;
-			else originalText = originalEncText;
-			isSaved = true;
-			frame.setTitle(frameTitle(saveFile.getFile() + fileType));
+		}catch(Exception error) {
+			error.printStackTrace();
+			JOptionPane.showMessageDialog(frame, "Could not save the file.");
+			return;
 		}
+		// set frame title
+		if(fileType.equals(".txt")) originalText = textA;
+		else originalText = originalEncText;
+		isSaved = true;
+		frame.setTitle(frameTitle(fileName));
 	}
 	
 	public void encryptText(String textA, String fileType) {
@@ -376,21 +394,25 @@ public class SecureTextEditor extends WindowAdapter implements ActionListener{
 		// This will have pop up dialog for user to input their key
 		if(fileType.equals(".encv")) {
 			key = JOptionPane.showInputDialog(frame, "Encrypt file with Vigenere Cipher\nEnter your key to encrypt:");
-			if(key != null) saveFile(new VigenereCipher(textA, key).encrypt(), fileType);
+			if(key != null && !key.isEmpty()) saveFile(new VigenereCipher(textA, key).encrypt(), fileType);
 		}else if(fileType.equals(".enca")) {
-			key = JOptionPane.showInputDialog(frame, "Encrypt file with Advanced Ecryption Standard\nEnter your key to encrypt:");
-			if(key != null) saveFile(new AES(textA, key).encrypt(), fileType);
+			key = JOptionPane.showInputDialog(frame, "Encrypt file with Advanced Encryption Standard\nEnter your key to encrypt:");
+			if(key != null && !key.isEmpty()) saveFile(new AES(textA, key).encrypt(), fileType);
 		}
 	}
 	
+	// returns null when the user cancels or the key is wrong
 	public String decryptText(String textA, String fileType) {
-		String plainText = "", key = "";
+		String plainText = null, key = null;
 		if(fileType.equals("encv")) {
 			key = JOptionPane.showInputDialog(frame, "Decrypt Vigenere Cipher\nEnter your key to decrypt:");
+			if (key == null || key.isEmpty()) return null;
 			plainText = new VigenereCipher(textA, key).decrypt();
 		}else if(fileType.equals("enca")) {
 			key = JOptionPane.showInputDialog(frame, "Decrypt Advanced Encryption Standard\nEnter your key to decrypt:");
+			if (key == null || key.isEmpty()) return null;
 			plainText = new AES(textA, key).decrypt();
+			if (plainText == null) JOptionPane.showMessageDialog(frame, "Wrong key or the file is not AES encrypted.");
 		}
 		return plainText;
 	}
